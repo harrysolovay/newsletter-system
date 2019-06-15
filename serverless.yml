@@ -1,0 +1,81 @@
+service: newsletter
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  stage: dev
+  region: us-west-2
+  environment:
+    USERS_TABLE: ${self:service}-${opt:stage, self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:Scan
+        - dynamodb:ListStreams
+      Resource:
+        - 'arn:aws:dynamodb:${opt:region, self:provider.region}'
+    - Effect: Allow
+      Action:
+        - lambda:InvokeFunction
+      Resource: '*'
+    - Effect: 'Allow'
+      Action:
+        - 'ses:SendEmail'
+      Resource: '*'
+
+package:
+  exclude:
+    - node_modules/**
+
+plugins:
+  - serverless-plugin-include-dependencies
+
+resources:
+  Resources:
+    usersTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        TableName: ${self:provider.environment.USERS_TABLE}
+        AttributeDefinitions:
+          - AttributeName: email_address
+            AttributeType: S
+        KeySchema:
+          - AttributeName: email_address
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        StreamSpecification:
+          StreamViewType: NEW_AND_OLD_IMAGES
+
+functions:
+  request_subscription:
+    handler: lib/index.request_subscription
+    events:
+      - http:
+          path: request-subscription
+          method: post
+          cors: true
+  callback:
+    handler: lib/index.callback
+    events:
+      - stream:
+          type: dynamodb
+          batchSize: 1
+          startingPosition: LATEST
+          arn:
+            Fn::GetAtt:
+              - usersTable
+              - StreamArn
+  edit_subscription:
+    handler: lib/index.edit_subscription
+    events:
+      - http:
+          path: edit-subscription
+          method: post
+          cors: true
+  send_emails:
+    handler: lib/index.send_emails
